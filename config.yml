@@ -1,0 +1,11 @@
+policy:
+  files:
+    uspto_clean:
+      # - dataset/uspto_keras_model.hdf5
+      # - dataset/uspto_unique_templates.csv.gz
+      # - dataset/uspto_n5-3_keras_model.hdf5
+      # - dataset/uspto_n5-3_unique_templates.csv.gz
+stock:
+  files:
+    # n5: dataset/n5_stocks.hdf5
+    # n1: dataset/n1_stocks.hdf5

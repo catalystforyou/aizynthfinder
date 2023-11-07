@@ -369,6 +369,7 @@ class TemplatedRetroReaction(RetroReaction):
         self.smarts: str = kwargs["smarts"]
         self._use_rdchiral: bool = kwargs.get("use_rdchiral", True)
         self._rd_reaction: Optional[RdReaction] = None
+        self.activation_energy = metadata['activation_energy']
 
     def __str__(self) -> str:
         return (
@@ -398,9 +399,30 @@ class TemplatedRetroReaction(RetroReaction):
         return dict_
 
     def _apply(self) -> Tuple[Tuple[TreeMolecule, ...], ...]:
-        if self._use_rdchiral:
+        return self._processed_reactants()
+        '''if self._use_rdchiral:
             return self._apply_with_rdchiral()
-        return self._apply_with_rdkit()
+        return self._apply_with_rdkit()'''
+
+    def _processed_reactants(self) -> Tuple[Tuple[TreeMolecule, ...], ...]:
+        reactant = self.smarts
+        exclude_nums = set(self.mol.mapping_to_index.keys())
+        update_func = partial(
+            self._update_unmapped_atom_num, exclude_nums=exclude_nums
+        )
+        rct_objs = tuple(
+                [TreeMolecule(
+                    parent=self.mol,
+                    smiles=reactant,
+                    sanitize=True,
+                    mapping_update_callback=update_func,
+                    activation_energy=max(self.activation_energy, self.mol.activation_energy),
+                )]
+            )
+        self._reactants = tuple((rct_objs,))
+
+        return self._reactants
+
 
     def _apply_with_rdchiral(self) -> Tuple[Tuple[TreeMolecule, ...], ...]:
         """

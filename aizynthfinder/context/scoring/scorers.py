@@ -169,7 +169,7 @@ class NumberOfPrecursorsInStockScorer(Scorer):
 
     def __init__(self, config: Configuration) -> None:
         super().__init__(config)
-        self._stock = config.stock
+        self._stock = None #config.stock
 
     def __repr__(self) -> str:
         return "number of pre-cursors in stock"

@@ -162,7 +162,9 @@ class MctsState:
         max_transforms_score = self._squash_function(max_transforms, -1, 0, 4)
 
         # NB weights should sum to 1, to ensure that all
-        score4 = 0.95 * fraction_in_stock + 0.05 * max_transforms_score
+        # print([mol.activation_energy for mol in self.mols])
+        score4 = self._squash_function(max([mol.activation_energy for mol in self.mols]), 1, 0, 0)
+        # print(score4)
         return float(score4)
 
     @staticmethod

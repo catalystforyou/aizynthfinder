@@ -267,6 +267,7 @@ class TreeMolecule(Molecule):
         smiles: str = None,
         sanitize: bool = False,
         mapping_update_callback: Callable[["TreeMolecule"], None] = None,
+        activation_energy: float = 0
     ) -> None:
         super().__init__(rd_mol=rd_mol, smiles=smiles, sanitize=sanitize)
         self.parent = parent
@@ -274,7 +275,7 @@ class TreeMolecule(Molecule):
             self.transform: int = parent.transform + 1
         else:
             self.transform = transform or 0
-
+        self.activation_energy = activation_energy
         self.original_smiles = smiles
         self.tracked_atom_indices: Dict[int, Optional[int]] = {}
         self.mapped_mol = Chem.Mol(self.rd_mol)
@@ -287,8 +288,9 @@ class TreeMolecule(Molecule):
         self.mapped_smiles = Chem.MolToSmiles(self.mapped_mol)
 
         if self.parent:
-            self.remove_atom_mapping()
-            self._update_tracked_atoms()
+            pass
+            # self.remove_atom_mapping()
+            # self._update_tracked_atoms()
 
     @property
     def mapping_to_index(self) -> Dict[int, int]:

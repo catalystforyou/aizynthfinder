@@ -15,6 +15,7 @@ from aizynthfinder.utils.exceptions import (
     RejectionException,
 )
 from aizynthfinder.utils.logging import logger
+from aizynthfinder.context.policy.expansion_strategies import ElementaryStep
 
 if TYPE_CHECKING:
     from aizynthfinder.chem import (
@@ -60,11 +61,19 @@ class MctsNode:
         owner: MctsSearchTree,
         config: Configuration,
         parent: MctsNode = None,
-    ):
+        activation: float = 0,
+        energy_data: dict = {},
+        mapnum: set = set(),
+    ):  
+        # print('Node', mapnum)
         self._state = state
         self._config = config
-        self._expansion_policy = config.expansion_policy
+        self._expansion_policy = ElementaryStep(mapnum=mapnum)
         self._filter_policy = config.filter_policy
+        
+        self._activation = activation
+        self.energy_data = energy_data
+        self.mapnum = mapnum
         self.tree = owner
         self.is_expanded: bool = False
         self.is_expandable: bool = not self.state.is_terminal
@@ -77,6 +86,7 @@ class MctsNode:
 
         self._children_values: List[float] = []
         self._children_priors: List[float] = []
+        self._activation_energies: List[float] = []
         self._children_visitations: List[int] = []
         self._children_actions: List[RetroReaction] = []
         self._children: List[Optional[MctsNode]] = []
@@ -98,7 +108,7 @@ class MctsNode:
 
     @classmethod
     def create_root(
-        cls, smiles: str, tree: MctsSearchTree, config: Configuration
+        cls, smiles: str, tree: MctsSearchTree, config: Configuration, mapnum: set
     ) -> "MctsNode":
         """
         Create a root node for a tree using a SMILES.
@@ -110,7 +120,7 @@ class MctsNode:
         """
         mol = TreeMolecule(parent=None, transform=0, smiles=smiles)
         state = MctsState(mols=[mol], config=config)
-        return MctsNode(state=state, owner=tree, config=config)
+        return MctsNode(state=state, owner=tree, config=config, activation=0, mapnum=mapnum)
 
     @classmethod
     def from_dict(
@@ -236,6 +246,8 @@ class MctsNode:
         (
             self._children_actions,
             self._children_priors,
+            self._activation_energies,
+            self.energy_data
         ) = self._expansion_policy(self.state.expandable_mols)
         nactions = len(self._children_actions)
         self._children_visitations = [1] * nactions
@@ -366,9 +378,14 @@ class MctsNode:
             if self._filter_child_reaction(self._children_actions[child_idx]):
                 self._children_values[child_idx] = -1e6
             else:
-                self._children[child_idx] = MctsNode(
-                    state=state, owner=self.tree, config=self._config, parent=self
-                )
+                if self._parent is not None:
+                    self._children[child_idx] = MctsNode(
+                        state=state, owner=self.tree, config=self._config, parent=self, activation=max(self._activation_energies[child_idx], self._parent._activation), energy_data=self.energy_data, mapnum=self.mapnum
+                    )
+                else:
+                    self._children[child_idx] = MctsNode(
+                        state=state, owner=self.tree, config=self._config, parent=self, activation=self._children_priors[child_idx], energy_data=self.energy_data, mapnum=self.mapnum
+                    )
                 new_nodes.append(self._children[child_idx])
         return new_nodes
 

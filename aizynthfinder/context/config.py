@@ -11,8 +11,9 @@ import yaml
 
 from aizynthfinder.context.cost import MoleculeCost
 from aizynthfinder.context.policy import ExpansionPolicy, FilterPolicy
+from aizynthfinder.context.policy.expansion_strategies import ElementaryStep
 from aizynthfinder.context.scoring import ScorerCollection
-from aizynthfinder.context.stock import Stock
+from aizynthfinder.context.stock import Stock, ProductStock
 from aizynthfinder.utils.logging import logger
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 class _PostprocessingConfiguration:
     min_routes: int = 5
     max_routes: int = 25
-    all_routes: bool = False
+    all_routes: bool = True
     route_distance_model: Optional[str] = None
 
 
@@ -47,12 +48,12 @@ class Configuration:  # pylint: disable=R0902
     cutoff_number: int = 50
     additive_expansion: bool = False
     use_rdchiral: bool = True
-    max_transforms: int = 6
+    max_transforms: int = 3
     default_prior: float = 0.5
     use_prior: bool = True
     iteration_limit: int = 100
     return_first: bool = False
-    time_limit: int = 120
+    time_limit: int = 300
     filter_cutoff: float = 0.05
     exclude_target_from_stock: bool = True
     template_column: str = "retro_template"
@@ -60,15 +61,15 @@ class Configuration:  # pylint: disable=R0902
     use_remote_models: bool = False
     search_algorithm: str = "mcts"
     post_processing: _PostprocessingConfiguration = _PostprocessingConfiguration()
-    stock: Stock = None  # type: ignore
-    expansion_policy: ExpansionPolicy = None  # type: ignore
+    # stock: Stock = None  # type: ignore
+    expansion_policy: ExpansionPolicy = ElementaryStep()  # type: ignore
     filter_policy: FilterPolicy = None  # type: ignore
     scorers: ScorerCollection = None  # type: ignore
     molecule_cost: MoleculeCost = None  # type: ignore
 
     def __post_init__(self) -> None:
         self._properties: StrDict = {}
-        self.stock = Stock()
+        # self.stock = Stock()
         self.expansion_policy = ExpansionPolicy(self)
         self.filter_policy = FilterPolicy(self)
         self.scorers = ScorerCollection(self)
@@ -79,6 +80,18 @@ class Configuration:  # pylint: disable=R0902
         if not isinstance(other, Configuration):
             return False
         return self.properties == other.properties
+
+
+    @property
+    def stock(self) -> ProductStock:
+        return self._stock
+
+    @stock.setter  
+    def stock(self, product_smiles: Any) -> None:  
+        if isinstance(product_smiles, ProductStock):  
+            self._stock = product_smiles  # Use a private attribute to store the object  
+        elif isinstance(product_smiles, str):  
+            self._stock = ProductStock(product_smiles)  
 
     @classmethod
     def from_dict(cls, source: StrDict) -> "Configuration":

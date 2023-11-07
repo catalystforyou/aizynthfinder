@@ -13,6 +13,7 @@ from aizynthfinder.context.policy.utils import _make_fingerprint
 from aizynthfinder.utils.exceptions import PolicyException
 from aizynthfinder.utils.logging import logger
 from aizynthfinder.utils.models import load_model
+from aizynthfinder.context.policy.perform_elementary_step import perform_step_with_prob
 
 if TYPE_CHECKING:
     from aizynthfinder.chem import TreeMolecule
@@ -40,12 +41,14 @@ class ExpansionStrategy(abc.ABC):
 
     _required_kwargs: List[str] = []
 
-    def __init__(self, key: str, config: Configuration, **kwargs: str) -> None:
+    # def __init__(self, key: str, config: Configuration, **kwargs: str) -> None:
+    def __init__(self, key=None, config=None, **kwargs: str) -> None:
         if any(name not in kwargs for name in self._required_kwargs):
-            raise PolicyException(
+            pass
+            '''raise PolicyException(
                 f"A {self.__class__.__name__} class needs to be initiated "
                 f"with keyword arguments: {', '.join(self._required_kwargs)}"
-            )
+            )'''
         self._config = config
         self._logger = logger()
         self.key = key
@@ -166,3 +169,103 @@ class TemplateBasedExpansionStrategy(ExpansionStrategy):
     def _predict(mol: TreeMolecule, model: Any) -> np.ndarray:
         fp_arr = _make_fingerprint(mol, model)
         return np.array(model.predict(fp_arr)).flatten()
+
+class ElementaryStep(ExpansionStrategy):
+    
+    # _required_kwargs = ["source", "templatefile"]
+
+    def __init__(self, energy_data={}, mapnum={}, key='Elementary') -> None:
+        super().__init__()
+        self.key = key
+        self.energy_data = energy_data
+        self.mapnum = mapnum
+        # source = kwargs["source"]
+        # templatefile = kwargs["templatefile"]
+
+        self._logger.info(
+            # f"Loading template-based expansion policy model from {source} to {self.key}"
+            f"Using elementary step templates"
+        )
+        # self.model = load_model(source, self.key, self._config.use_remote_models)
+
+        '''self._logger.info(f"Loading templates from {templatefile} to {self.key}")
+        if templatefile.endswith(".csv.gz") or templatefile.endswith(".csv"):
+            self.templates: pd.DataFrame = pd.read_csv(
+                templatefile, index_col=0, sep="\t"
+            )
+        else:
+            self.templates = pd.read_hdf(templatefile, "table")
+
+        if hasattr(self.model, "output_size") and len(self.templates) != self.model.output_size:  # type: ignore
+            raise PolicyException(
+                f"The number of templates ({len(self.templates)}) does not agree with the "  # type: ignore
+                f"output dimensions of the model ({self.model.output_size})"
+            )'''
+        # print(self.mapnum)
+        
+    def __str__(self):
+        return "ElementaryStep"
+
+    def update_energy_data(self, energy_data):
+        self.energy_data = energy_data
+
+    # pylint: disable=R0914
+    def get_actions(
+        self, molecules: Sequence[TreeMolecule]
+    ) -> Tuple[List[RetroReaction], List[float]]:
+        """
+        Get all the probable actions of a set of molecules, using the selected policies and given cutoffs
+
+        :param molecules: the molecules to consider
+        :return: the actions and the priors of those actions
+        """
+        possible_actions = []
+        priors = []
+        energies = []
+        # print(self.mapnum)
+
+        for mol in molecules:
+            # print(mol.smiles)
+            # model = self.model
+            # templates = self.templates
+
+            # all_transforms_prop = self._predict(mol, model)
+            all_transforms_prop, energy_dict, energy_data = self._predict(mol, self.energy_data, self.mapnum)
+            # print(energy_data)
+            self.update_energy_data(energy_data)
+            # print(self.energy_data)
+            # probable_transforms_idx = self._cutoff_predictions(all_transforms_prop)
+            # possible_moves = templates.iloc[probable_transforms_idx]
+            # probs = all_transforms_prop[probable_transforms_idx]
+
+            # priors.extend(probs)
+            for k, v in all_transforms_prop.items():
+                possible_actions.append(TemplatedRetroReaction(mol, smarts=k, metadata={'probability': v, 'activation_energy': energy_dict[k]}))
+                priors.append(v)
+                energies.append(energy_dict[k])
+
+
+            '''for idx, (move_index, move) in enumerate(possible_moves.iterrows()):
+                metadata = dict(move)
+                del metadata[self._config.template_column]
+                metadata["policy_probability"] = float(probs[idx].round(4))
+                metadata["policy_probability_rank"] = idx
+                metadata["policy_name"] = self.key
+                metadata["template_code"] = move_index
+                metadata["template"] = move[self._config.template_column]
+                possible_actions.append(
+                    TemplatedRetroReaction(
+                        mol,
+                        smarts=move[self._config.template_column],
+                        metadata=metadata,
+                        use_rdchiral=self._config.use_rdchiral,
+                    )
+                )'''
+            # print(mol.smiles, all_transforms_prop)
+        return possible_actions, priors, energies, self.energy_data  # type: ignore
+
+    @staticmethod
+    def _predict(mol: TreeMolecule, energy_data: dict, mapnum: set) -> np.ndarray:
+        # print(len(energy_data))
+        return perform_step_with_prob(mol.smiles, energy_data, mapnum)
+

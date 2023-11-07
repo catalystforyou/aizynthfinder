@@ -15,11 +15,14 @@ from aizynthfinder.analysis import (
 )
 from aizynthfinder.chem import FixedRetroReaction, Molecule, TreeMolecule
 from aizynthfinder.context.config import Configuration
+from aizynthfinder.context.policy.expansion_strategies import ElementaryStep
+from aizynthfinder.context.stock import ProductStock
 from aizynthfinder.reactiontree import ReactionTreeFromExpansion
 from aizynthfinder.search.andor_trees import AndOrSearchTreeBase
 from aizynthfinder.search.mcts import MctsSearchTree
 from aizynthfinder.utils.exceptions import MoleculeException
 from aizynthfinder.utils.loading import load_dynamic_class
+from rdkit import Chem
 
 # This must be imported first to setup logging for rdkit, tensorflow etc
 from aizynthfinder.utils.logging import logger
@@ -36,6 +39,112 @@ if TYPE_CHECKING:
         Union,
     )
 
+def get_reacting_core(rs, p, buffer=1):
+    '''
+    use molAtomMapNumber of molecules
+    buffer: neighbor to be cosidered as reacting center
+    return: atomidx of reacting core
+    '''
+    def _get_buffer(m, cores, buffer):
+        neighbors = set(cores)
+
+        for i in range(buffer):
+            neighbors_temp = list(neighbors)
+            for c in neighbors_temp:
+                neighbors.update([n.GetIdx()
+                                 for n in m.GetAtomWithIdx(c).GetNeighbors()])
+
+        neighbors = [m.GetAtomWithIdx(x).GetAtomMapNum() for x in neighbors]
+
+        return neighbors
+
+    def _verify_changes(r_mols, p_mol, core_rs, core_p, discard_rs):
+        core_rs = core_rs + discard_rs
+        r_mols, p_mol = Chem.AddHs(r_mols), Chem.AddHs(p_mol)
+        remove_rs_idx, remove_p_idx = [], []
+        for atom in r_mols.GetAtoms():
+            if atom.GetIdx() in core_rs or atom.GetAtomMapNum() == 0:
+                remove_rs_idx.append(atom.GetIdx())
+        for atom in p_mol.GetAtoms():
+            if atom.GetIdx() in core_p or atom.GetAtomMapNum() == 0:
+                remove_p_idx.append(atom.GetIdx())
+        r_mols, p_mol = Chem.RWMol(r_mols), Chem.RWMol(p_mol)
+        for idx in sorted(remove_rs_idx, reverse=True):
+            r_mols.RemoveAtom(idx)
+        for idx in sorted(remove_p_idx, reverse=True):
+            p_mol.RemoveAtom(idx)
+        return Chem.MolToSmiles(r_mols) == Chem.MolToSmiles(p_mol)
+
+    r_mols = Chem.MolFromSmiles(rs)
+    p_mol = Chem.MolFromSmiles(p)
+
+    rs_dict = {a.GetAtomMapNum(): a for a in r_mols.GetAtoms()}
+    rs_bond_dict = {'{}-{}'.format(*sorted([b.GetBeginAtom().GetAtomMapNum(),
+                                            b.GetEndAtom().GetAtomMapNum()])): b
+                    for b in r_mols.GetBonds()}
+
+    p_dict = {a.GetAtomMapNum(): a for a in p_mol.GetAtoms()}
+    p_bond_dict = {'{}-{}'.format(*sorted([b.GetBeginAtom().GetAtomMapNum(),
+                                          b.GetEndAtom().GetAtomMapNum()])): b
+                   for b in p_mol.GetBonds()}
+
+    rs_reactants = []
+    for r_smiles in rs.split('.'):
+        for a in Chem.MolFromSmiles(r_smiles).GetAtoms():
+            if a.GetAtomMapNum() in p_dict:
+                rs_reactants.append(r_smiles)
+                break
+    rs_reactants = '.'.join(rs_reactants)
+
+    core_mapnum = set()
+    core_bond = set()
+    for a_map in p_dict:
+
+        a_neighbor_in_p = set([a.GetAtomMapNum()
+                              for a in p_dict[a_map].GetNeighbors()])
+        a_neighbor_in_rs = set([a.GetAtomMapNum()
+                               for a in rs_dict[a_map].GetNeighbors()])
+        if a_neighbor_in_p != a_neighbor_in_rs:
+            core_mapnum.add(a_map)
+        else:
+            for a_neighbor in a_neighbor_in_p:
+                b_in_p = p_mol.GetBondBetweenAtoms(
+                    p_dict[a_neighbor].GetIdx(), p_dict[a_map].GetIdx())
+                b_in_r = r_mols.GetBondBetweenAtoms(
+                    rs_dict[a_neighbor].GetIdx(), rs_dict[a_map].GetIdx())
+                if b_in_p.GetBondType() != b_in_r.GetBondType():
+                    core_bond.add(b_in_r.GetIdx())
+                    core_mapnum.add(a_map)
+
+    for k, v in rs_bond_dict.items():
+        if (k not in p_bond_dict.keys() and k != '0-0') or (k.split('_')[0] in core_mapnum and k.split('_')[1] in core_mapnum):
+            # the marked bond changes here only contain those between heavy atoms
+            core_bond.add(v.GetIdx())
+
+    core_rs = _get_buffer(r_mols, [rs_dict[a].GetIdx()
+                          for a in core_mapnum], buffer)
+    core_p = _get_buffer(p_mol, [p_dict[a].GetIdx()
+                         for a in core_mapnum], buffer)
+
+    fatom_index_rs = \
+        {a.GetAtomMapNum(): a.GetIdx() for a in r_mols.GetAtoms()}
+    fatom_index_p = \
+        {a.GetAtomMapNum(): a.GetIdx() for a in p_mol.GetAtoms()}
+
+    # core_rs = [fatom_index_rs[x] for x in core_rs]
+    # core_p = [fatom_index_p[x] for x in core_p]
+
+    discard_rs = []
+
+    for atom in r_mols.GetAtoms():
+        if atom.GetAtomMapNum() == 0:
+            discard_rs.append(atom.GetIdx())
+
+    if _verify_changes(r_mols, p_mol, core_rs, core_p, discard_rs):
+        return core_rs# , discard_rs, list(core_bond), core_p
+    else:
+        return core_rs#[], [], [], []
+        # return core_rs, discard_rs, list(core_bond), core_p
 
 class AiZynthFinder:
     """
@@ -70,9 +179,8 @@ class AiZynthFinder:
         else:
             self.config = Configuration()
 
-        self.expansion_policy = self.config.expansion_policy
+        self.expansion_policy = ElementaryStep()
         self.filter_policy = self.config.filter_policy
-        self.stock = self.config.stock
         self.scorers = self.config.scorers
         self.tree: Optional[Union[MctsSearchTree, AndOrSearchTreeBase]] = None
         self._target_mol: Optional[Molecule] = None
@@ -89,7 +197,12 @@ class AiZynthFinder:
 
     @target_smiles.setter
     def target_smiles(self, smiles: str) -> None:
-        self.target_mol = Molecule(smiles=smiles)
+        reactant, product = smiles.split('>')[0], smiles.split('>')[-1]
+        mapnum = get_reacting_core(reactant, product)
+        self.mapnum = set(mapnum) if mapnum != set([0]) else set()
+        self.target_mol = Molecule(smiles=reactant)
+        # self.stock = ProductStock(product=product)
+        self.config.stock = ProductStock(product=product)
 
     @property
     def target_mol(self) -> Optional[Molecule]:
@@ -100,6 +213,15 @@ class AiZynthFinder:
     def target_mol(self, mol: Molecule) -> None:
         self.tree = None
         self._target_mol = mol
+
+    @property
+    def mapnum(self) -> set:
+        """The mapnum of the reacting core"""
+        return self._mapnum
+
+    @mapnum.setter
+    def mapnum(self, mapnum: set) -> None:
+        self._mapnum = mapnum
 
     def build_routes(
         self, selection: RouteSelectionArguments = None, scorer: str = "state score"
@@ -156,10 +278,10 @@ class AiZynthFinder:
         except MoleculeException:
             raise ValueError("Target molecule unsanitizable")
 
-        self.stock.reset_exclusion_list()
+        '''self.stock.reset_exclusion_list()
         if self.config.exclude_target_from_stock and self.target_mol in self.stock:
             self.stock.exclude(self.target_mol)
-            self._logger.debug("Excluding the target compound from the stock")
+            self._logger.debug("Excluding the target compound from the stock")'''
 
         self._setup_search_tree()
         self.analysis = None
@@ -211,6 +333,7 @@ class AiZynthFinder:
 
             try:
                 is_solved = self.tree.one_iteration()
+                print(is_solved)
             except StopIteration:
                 break
 
@@ -236,7 +359,7 @@ class AiZynthFinder:
         self._logger.debug("Defining tree root: %s" % self.target_smiles)
         if self.config.search_algorithm.lower() == "mcts":
             self.tree = MctsSearchTree(
-                root_smiles=self.target_smiles, config=self.config
+                root_smiles=self.target_smiles, config=self.config, mapnum=self.mapnum
             )
         else:
             cls = load_dynamic_class(self.config.search_algorithm)

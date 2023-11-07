@@ -8,6 +8,7 @@ from aizynthfinder.context.collection import ContextCollection
 from aizynthfinder.context.policy.expansion_strategies import (
     ExpansionStrategy,
     TemplateBasedExpansionStrategy,
+    ElementaryStep,
 )
 from aizynthfinder.context.policy.expansion_strategies import (
     __name__ as expansion_strategy_module,
@@ -60,9 +61,8 @@ class ExpansionPolicy(ContextCollection):
         :return: the actions and the priors of those actions
         :raises: PolicyException: if the policy isn't selected
         """
-        if not self.selection:
-            raise PolicyException("No expansion policy selected")
-
+        '''if not self.selection:
+            raise PolicyException("No expansion policy selected")'''
         all_possible_actions = []
         all_priors = []
         for name in self.selection:
@@ -107,7 +107,8 @@ class ExpansionPolicy(ContextCollection):
 
         :param config: the configuration
         """
-        files_spec = config.get("files", config.get("template-based", {}))
+        self.load(ElementaryStep())
+        '''files_spec = config.get("files", config.get("template-based", {}))
         for key, policy_spec in files_spec.items():
             modelfile, templatefile = policy_spec
             strategy = TemplateBasedExpansionStrategy(
@@ -124,7 +125,7 @@ class ExpansionPolicy(ContextCollection):
             )
             for key, policy_spec in strategy_config.items():
                 obj = cls(key, self._config, **(policy_spec or {}))
-                self.load(obj)
+                self.load(obj)'''
 
 
 class FilterPolicy(ContextCollection):
